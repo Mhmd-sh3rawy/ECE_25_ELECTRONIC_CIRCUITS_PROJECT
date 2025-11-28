@@ -7,7 +7,7 @@ const char* ssid = "Ahmed";
 const char* password = "*asdf1234#";
 
 // Your Domain name with URL path or IP address with path
-String openWeatherMapApiKey = "f02d4cd1e6af7c1699f543ecbb5693fc";
+String openWeatherMapApiKey = "58e56f237bc3057843fa4f3a8052a738";
 // Example:
 //String openWeatherMapApiKey = "bd939aa3d23ff33d3c8f5dd1dd435";
 
