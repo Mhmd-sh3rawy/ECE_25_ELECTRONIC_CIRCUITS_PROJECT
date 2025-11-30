@@ -46,7 +46,7 @@ void readDHT(void* parameters){
 void readPulseSensor(void *parameters){
   uint32_t lastPeakTime = 0;
   uint16_t threshold = 2650;
-  uint32_t timeDelay = 600;
+  uint32_t timeDelay = 800;
   bool pulseOcurred = false;
 
   uint8_t READING_NUM = 10;
@@ -124,7 +124,7 @@ void setup(){
 
   xTaskCreatePinnedToCore(
     readPulseSensor,
-    "",
+    "READ PULSE SENSOR TASK",
     3000,
     NULL,
     1,
