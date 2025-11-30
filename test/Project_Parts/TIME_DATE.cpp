@@ -14,8 +14,18 @@ ESP32Time rtc(0);
 #define ntpServer1 "pool.ntp.org"
 //#define ntpServer2 "time.nist.gov"
 
+typedef struct{
+  String time;
+  String date;
+  String ampm;
+}timeStrings;
+
+timeStrings info;
+
 void setup() {
   Serial.begin(115200);
+
+  delay(2000);
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
@@ -32,13 +42,18 @@ void setup() {
   configTime(gmOffset, dayLightSavingOffset, ntpServer1);
   struct tm timeinfo;
   if (getLocalTime(&timeinfo)){
-    rtc.setTimeStruct(timeinfo);
+    Serial.println("Configured Correctly");
+    //rtc.setTimeStruct(timeinfo);
   }
 }
 
 void loop() {
-
-  struct tm timeinfo = rtc.getTimeStruct();
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");  
-  delay(1000);
+  info.time = rtc.getTime();
+  info.date = rtc.getDate(false);
+  info.ampm = rtc.getAmPm(true);
+  Serial.print(info.date);
+  Serial.print("  ");
+  Serial.print(info.time);
+  Serial.print("  ");
+  Serial.println(info.ampm);
 }
