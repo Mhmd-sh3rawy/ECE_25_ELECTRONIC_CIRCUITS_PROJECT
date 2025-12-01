@@ -4,6 +4,14 @@
 #include <DHT_U.h>
 #include <DHT.h>
 
+#include <WiFi.h>
+#include <ESP32Time.h>
+
+#include <Wire.h>
+#include <U8g2lib.h>
+
+#define SCREEN_BUTTON 
+
 #define DHTPIN 13
 #define DHTTYPE DHT11
 
@@ -11,7 +19,28 @@
 
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
+#define SSID "Ahmed"
+#define PASSWORD "*asdf1234#"
+
+ESP32Time rtc(0);
+
+#define gmOffset 7200     // (GMT+2) in seconds
+#define dayLightSaving 0 
+#define ntpServer1 "pool.ntp.org"
+#define ntpServer2 "time.nist.gov" 
+
+typedef struct{
+  String date;
+  String time;
+  String AmPm;
+}timeStrings;
+
+U8G2_SH1106_128X64_NONAME_F_HW_I2C screen(U8G2_R0, U8X8_PIN_NONE, SCL, SDA);
+
 TaskHandle_t readDHT_handle;
+TaskHandle_t readPulseSensor_handle;
+TaskHandle_t readRTC_handle;
+TaskHandle_t screenDisplay_handle;
 
 void readDHT(void* parameters){
   for(;;){
@@ -46,7 +75,7 @@ void readDHT(void* parameters){
 void readPulseSensor(void *parameters){
   uint32_t lastPeakTime = 0;
   uint16_t threshold = 2650;
-  uint32_t timeDelay = 800;
+  uint32_t timeDelay = 400;
   bool pulseOcurred = false;
 
   uint8_t READING_NUM = 10;
@@ -107,10 +136,44 @@ void readPulseSensor(void *parameters){
   }
 }
 
+void readRTC(void *parameters){
+  tm timeInfo;
+  timeStrings strTime;
+
+  for(;;){
+    if(getLocalTime(&timeInfo)){
+      strTime.date = rtc.getDate(true);
+      strTime.time = rtc.getTime();
+      strTime.AmPm = rtc.getAmPm(true);
+
+      Serial.print(strTime.date);
+      Serial.printf("  %s  %s \n", strTime.time, strTime.AmPm);
+    }else{
+      Serial.println("FAILED TO READTIME");
+    }
+
+    vTaskDelay(1000/portTICK_PERIOD_MS);
+
+  }
+}
+
 void setup(){
   Serial.begin(115200);
 
+  delay(1000);
+  
   dht.begin();
+  
+  WiFi.mode(WIFI_STA); // Set to station mode
+  WiFi.begin(SSID, PASSWORD);
+  Serial.printf("Connecting to %s", SSID);
+
+  while(WiFi.status() != WL_CONNECTED){
+    Serial.print(".");
+    delay(250);
+  }
+
+  configTime(gmOffset, dayLightSaving, ntpServer1, ntpServer2);
 
   xTaskCreatePinnedToCore(
     readDHT,
@@ -128,9 +191,20 @@ void setup(){
     3000,
     NULL,
     1,
-    NULL,
+    &readPulseSensor_handle,
     1
   );
+
+  xTaskCreatePinnedToCore(
+    readRTC,
+    "READ INTERNAL RTC TASK",
+    3000,
+    NULL,
+    1,
+    &readRTC_handle,
+    1
+  );
+  
 }
 
 void loop(){

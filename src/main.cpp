@@ -7,6 +7,14 @@
 #include <WiFi.h>
 #include <ESP32Time.h>
 
+#include <Wire.h>
+#include <U8g2lib.h>
+
+#define SCREEN_BUTTON 18
+#define DEBOUNCE_TIME 200
+
+unsigned long lastScreenChangeTime = 0;
+
 #define DHTPIN 13
 #define DHTTYPE DHT11
 
@@ -30,11 +38,54 @@ typedef struct{
   String AmPm;
 }timeStrings;
 
+typedef struct{
+  float temp;       // stands for Temperature obviusly!!
+  float rh;         // stands for relative humidiy
+}DHT_sensor_data;
+
+U8G2_SH1106_128X64_NONAME_F_HW_I2C screen(U8G2_R0, U8X8_PIN_NONE, SCL, SDA);
+
 TaskHandle_t readDHT_handle;
 TaskHandle_t readPulseSensor_handle;
 TaskHandle_t readRTC_handle;
+TaskHandle_t screenDisplay_handle;
+
+QueueHandle_t screenRTCQueue_handle;
+
+QueueHandle_t screenDHTQueue_handle;
+#define SCREEN_DHT_QUEUE_SIZE 5
+
+QueueHandle_t screenPulseQueue_handle;
+#define SCREEN_PULSE_QUEUE_SIZE 10
+
+SemaphoreHandle_t screenDisplaySemaphore_handle;
+
+void IRAM_ATTR screenButtonISR(){
+  unsigned long currentTime = millis();
+  if(currentTime - lastScreenChangeTime > DEBOUNCE_TIME){
+    BaseType_t higherPriorityTaskWoken = pdFALSE;
+    xSemaphoreGiveFromISR(screenDisplaySemaphore_handle, &higherPriorityTaskWoken);
+    Serial.println("SEMAPHORE DONEEEEEEEEEEEEEEEEEEEEEEE EEEE");
+    lastScreenChangeTime = currentTime;
+    if(higherPriorityTaskWoken){
+      portYIELD_FROM_ISR();
+    }
+  }
+}
+
+/*
+void testInterrupt(void *parameters){
+  for(;;){
+    if(xSemaphoreTake(screenDisplaySemaphore_handle, portMAX_DELAY)){
+      Serial.println("INTERRUPTTED SUCCESSFULLY");
+    }
+  }
+}
+*/
 
 void readDHT(void* parameters){
+  DHT_sensor_data TempRHvalues;
+
   for(;;){
     vTaskDelay(1000 / portTICK_RATE_MS);
 
@@ -47,6 +98,8 @@ void readDHT(void* parameters){
       Serial.print("DHT11 Temp = ");
       Serial.print(event.temperature);
       Serial.println("°C");
+
+      TempRHvalues.temp = event.temperature;
     }
 
     dht.humidity().getEvent(&event);
@@ -57,7 +110,11 @@ void readDHT(void* parameters){
       Serial.print("DHT11 REL_HUMIDITY = ");
       Serial.print(event.relative_humidity);
       Serial.println("%");  
+
+      TempRHvalues.rh = event.relative_humidity;
     }
+
+    xQueueSend(screenDHTQueue_handle, &TempRHvalues, 50);
 
     Serial.print("Free Stack DHT: ");
     Serial.println(uxTaskGetStackHighWaterMark(readDHT_handle));
@@ -116,6 +173,8 @@ void readPulseSensor(void *parameters){
       Serial.print("Current BPM = ");
       Serial.println(BPM);
 
+      xQueueSend(screenPulseQueue_handle, &BPM, 20);
+
     }
 
 
@@ -134,17 +193,60 @@ void readRTC(void *parameters){
 
   for(;;){
     if(getLocalTime(&timeInfo)){
-      strTime.date = rtc.getDate(true);
+      strTime.date = rtc.getDate(false);
       strTime.time = rtc.getTime();
       strTime.AmPm = rtc.getAmPm(true);
 
       Serial.print(strTime.date);
       Serial.printf("  %s  %s \n", strTime.time, strTime.AmPm);
+
+      xQueueSend(screenRTCQueue_handle, &strTime, 50);
+
     }else{
       Serial.println("FAILED TO READTIME");
     }
-
     vTaskDelay(1000/portTICK_PERIOD_MS);
+
+  }
+}
+
+void screenDisplay(void *parameters){
+  uint8_t currentScreenIndex = 0;
+  timeStrings tmInfoBuffer;
+  DHT_sensor_data TempRHvaluesBuffer;
+  uint16_t pulseReadingBuffer;
+
+  for(;;){
+    if(xSemaphoreTake(screenDisplaySemaphore_handle, 150/portTICK_PERIOD_MS)){
+      currentScreenIndex = (currentScreenIndex+1)%3;
+    }
+
+    if(currentScreenIndex == 0){
+      xQueueReceive(screenRTCQueue_handle, &tmInfoBuffer, 100);
+      screen.clearBuffer();
+      screen.setFont(u8g2_font_helvB12_te);
+      screen.drawStr(30,25, tmInfoBuffer.time.c_str());
+      screen.setFont(u8g2_font_helvR08_te);
+      screen.drawStr(20,50, tmInfoBuffer.date.c_str());
+      screen.sendBuffer();
+    }else if(currentScreenIndex == 1){
+      xQueueReceive(screenDHTQueue_handle, &TempRHvaluesBuffer, 50);
+      screen.clearBuffer();
+      screen.setFont(u8g2_font_helvB10_te);
+      screen.setCursor(20,25);
+      screen.printf("Temp = %.2f ", TempRHvaluesBuffer.temp);
+      screen.setCursor(30,50);
+      screen.printf("RH = %.2f", TempRHvaluesBuffer.rh);
+      screen.sendBuffer();
+    }else{
+      xQueueReceive(screenPulseQueue_handle, &pulseReadingBuffer, 20);
+      screen.clearBuffer();
+      screen.setFont(u8g2_font_helvB12_te);
+      screen.drawStr(40, 25, "BPM");
+      screen.setCursor(50,50);
+      screen.print(pulseReadingBuffer);
+      screen.sendBuffer();
+    }
 
   }
 }
@@ -155,7 +257,17 @@ void setup(){
   delay(1000);
   
   dht.begin();
+
+  pinMode(SCREEN_BUTTON, INPUT_PULLUP);
   
+  attachInterrupt(digitalPinToInterrupt(SCREEN_BUTTON), (void (*)())screenButtonISR, FALLING);
+
+  screenDisplaySemaphore_handle = xSemaphoreCreateBinary();
+
+  screenRTCQueue_handle = xQueueCreate(1, sizeof(timeStrings));
+  screenDHTQueue_handle = xQueueCreate(SCREEN_DHT_QUEUE_SIZE, sizeof(DHT_sensor_data));
+  screenPulseQueue_handle = xQueueCreate(SCREEN_PULSE_QUEUE_SIZE, sizeof(uint16_t));
+
   WiFi.mode(WIFI_STA); // Set to station mode
   WiFi.begin(SSID, PASSWORD);
   Serial.printf("Connecting to %s", SSID);
@@ -166,6 +278,11 @@ void setup(){
   }
 
   configTime(gmOffset, dayLightSaving, ntpServer1, ntpServer2);
+
+
+  Wire.begin();
+  screen.begin();
+
 
   xTaskCreatePinnedToCore(
     readDHT,
@@ -196,6 +313,26 @@ void setup(){
     &readRTC_handle,
     1
   );
+
+  xTaskCreatePinnedToCore(
+    screenDisplay,
+    "OLED DISPLAY TASK",
+    4000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
+
+  /*xTaskCreatePinnedToCore(
+    testInterrupt,
+    "INTERRUPT TESTING TASK",
+    1024,
+    NULL,
+    1,
+    NULL,
+    1
+  );*/
   
 }
 
