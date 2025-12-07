@@ -1,17 +1,22 @@
 #include <Arduino.h>
-
+/*  DHT11 Sensor required dependecies  */
 #include <Adafruit_Sensor.h>
 #include <DHT_U.h>
 #include <DHT.h>
 
 #include <WiFi.h>
+/*  Internal RTC lib  */
 #include <ESP32Time.h>
 
 #include <Wire.h>
+/*  The standard lib for SH106 drivers  */
 #include <U8g2lib.h>
+/*  Parsing and getting JSON APIs  */
+#include <HTTPClient.h>
+#include <Arduino_JSON.h>
 
 #define SCREEN_BUTTON 18
-#define DEBOUNCE_TIME 200
+#define DEBOUNCE_TIME 250
 
 unsigned long lastScreenChangeTime = 0;
 
@@ -32,6 +37,11 @@ ESP32Time rtc(0);
 #define ntpServer1 "pool.ntp.org"
 #define ntpServer2 "time.nist.gov" 
 
+String city = "Tanta"; 
+String countryCode = "EG";
+String APIKey = "58e56f237bc3057843fa4f3a8052a738";
+String openWeatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + countryCode + "&APPID=" + APIKey;
+
 typedef struct{
   String date;
   String time;
@@ -42,6 +52,18 @@ typedef struct{
   float temp;       // stands for Temperature obviusly!!
   float rh;         // stands for relative humidiy
 }DHT_sensor_data;
+
+typedef struct{
+  String description;
+  float tempFeelLike;
+  float humidity;
+  float windSpeed;
+}openWeatherJSONParsed;
+
+openWeatherJSONParsed weatherInfo;
+
+WiFiClient client;
+HTTPClient httpClient;
 
 U8G2_SH1106_128X64_NONAME_F_HW_I2C screen(U8G2_R0, U8X8_PIN_NONE, SCL, SDA);
 
@@ -210,6 +232,36 @@ void readRTC(void *parameters){
   }
 }
 
+void openWeatherGet(void* parameters){
+  openWeatherJSONParsed weatherInfoBuffer;
+  String tempJSON;
+  JSONVar tempJSONVar;
+
+  for(;;){
+    httpClient.begin(openWeatherUrl);
+    int httpCode = httpClient.GET();
+    if(httpCode>0){
+      Serial.println("---- HOLA! CONNECTED HTTP ----");
+      tempJSON = httpClient.getString();
+      tempJSONVar = JSON.parse(tempJSON);
+
+      Serial.print("Description = ");
+      Serial.println(tempJSONVar["weather"][0]["description"]);
+      Serial.print("API TEMP = ");
+      Serial.println(tempJSONVar["main"]["feels_like"]);
+      Serial.print("API RH = ");
+      Serial.println(tempJSONVar["main"]["humidity"]);
+      Serial.print("Wind Speed = ");
+      Serial.println(tempJSONVar["wind"]["speed"]);
+
+    }else{
+      Serial.println("HELL NAH");
+    }
+    httpClient.end();
+    vTaskDelay(5000/portTICK_PERIOD_MS);
+  }
+}
+
 void screenDisplay(void *parameters){
   uint8_t currentScreenIndex = 0;
   timeStrings tmInfoBuffer;
@@ -218,7 +270,7 @@ void screenDisplay(void *parameters){
 
   for(;;){
     if(xSemaphoreTake(screenDisplaySemaphore_handle, 150/portTICK_PERIOD_MS)){
-      currentScreenIndex = (currentScreenIndex+1)%3;
+      currentScreenIndex = (currentScreenIndex+1)%4;
     }
 
     if(currentScreenIndex == 0){
@@ -238,13 +290,18 @@ void screenDisplay(void *parameters){
       screen.setCursor(30,50);
       screen.printf("RH = %.2f", TempRHvaluesBuffer.rh);
       screen.sendBuffer();
-    }else{
+    }else if(currentScreenIndex == 2){
       xQueueReceive(screenPulseQueue_handle, &pulseReadingBuffer, 20);
       screen.clearBuffer();
       screen.setFont(u8g2_font_helvB12_te);
       screen.drawStr(40, 25, "BPM");
       screen.setCursor(50,50);
       screen.print(pulseReadingBuffer);
+      screen.sendBuffer();
+    }else{
+      screen.clearBuffer();
+      screen.setFont(u8g2_font_helvB12_te);
+      screen.drawStr(40,25,"MY API screen!!!");
       screen.sendBuffer();
     }
 
@@ -311,6 +368,16 @@ void setup(){
     NULL,
     1,
     &readRTC_handle,
+    1
+  );
+
+  xTaskCreatePinnedToCore(
+    openWeatherGet, 
+    "OpenWeatherAPI Task",
+    4000,
+    NULL,
+    1,
+    NULL,
     1
   );
 
