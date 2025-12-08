@@ -4,6 +4,7 @@
 #include <DHT_U.h>
 #include <DHT.h>
 
+#include <credentials.h>
 #include <WiFi.h>
 /*  Internal RTC lib  */
 #include <ESP32Time.h>
@@ -27,9 +28,6 @@ unsigned long lastScreenChangeTime = 0;
 
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
-#define SSID "Ahmed"
-#define PASSWORD "*asdf1234#"
-
 ESP32Time rtc(0);
 
 #define gmOffset 7200     // (GMT+2) in seconds
@@ -39,7 +37,6 @@ ESP32Time rtc(0);
 
 String city = "Tanta"; 
 String countryCode = "EG";
-String APIKey = "58e56f237bc3057843fa4f3a8052a738";
 String openWeatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + countryCode + "&APPID=" + APIKey;
 
 typedef struct{
@@ -259,7 +256,7 @@ void openWeatherGet(void* parameters){
       xQueueSend(screenOpenWeather_handle, &weatherInfoBuffer, portMAX_DELAY);
 
       Serial.print("Description = ");
-      Serial.println(weatherInfoBuffer.description);
+      Serial.println(weatherInfoBuffer.description.substring(1,weatherInfoBuffer.description.length()-1));
       Serial.print("API TEMP = ");
       Serial.println(weatherInfoBuffer.tempFeelLike);
       Serial.print("API RH = ");
@@ -318,7 +315,7 @@ void screenDisplay(void *parameters){
       xQueueReceive(screenOpenWeather_handle, &weatherInfoBuffer, pdMS_TO_TICKS(10));
       screen.clearBuffer();
       screen.setFont(u8g2_font_helvB08_tr);
-      screen.drawStr(24,17, weatherInfoBuffer.description.c_str());
+      screen.drawStr(24,17, weatherInfoBuffer.description.substring(1,weatherInfoBuffer.description.length()-1).c_str());
       screen.setCursor(14,34);
       screen.print("Temp: ");
       screen.print(weatherInfoBuffer.tempFeelLike - 273.25);
@@ -353,8 +350,8 @@ void setup(){
   screenOpenWeather_handle = xQueueCreate(SCREEN_WEATHER_API_QUEUE_SIZE, sizeof(openWeatherJSONParsed));
 
   WiFi.mode(WIFI_STA); // Set to station mode
-  WiFi.begin(SSID, PASSWORD);
-  Serial.printf("Connecting to %s", SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.printf("Connecting to %s", WIFI_SSID);
 
   while(WiFi.status() != WL_CONNECTED){
     Serial.print(".");
