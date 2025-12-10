@@ -4,7 +4,6 @@
 #include <DHT_U.h>
 #include <DHT.h>
 
-#include <credentials.h>
 #include <WiFi.h>
 /*  Internal RTC lib  */
 #include <ESP32Time.h>
@@ -15,13 +14,15 @@
 /*  Parsing and getting JSON APIs  */
 #include <HTTPClient.h>
 #include <Arduino_JSON.h>
+/*  Handling credentials   */
+#include <credentials.h>
 
-#define SCREEN_BUTTON 18
+#define SCREEN_CHANGE_BUTTON 18
 #define DEBOUNCE_TIME 250
 
 unsigned long lastScreenChangeTime = 0;
 
-#define DHTPIN 13
+#define DHTPIN 32
 #define DHTTYPE DHT11
 
 #define PULSE_PIN 33
@@ -57,12 +58,24 @@ typedef struct{
   float windSpeed;
 }openWeatherJSONParsed;
 
+typedef struct{
+  uint8_t screenCurrentIndex;
+  uint8_t currentBlinkingTimeField;
+  uint8_t timeChange;
+}ScreenStatus;
+
 openWeatherJSONParsed weatherInfo;
 
 WiFiClient client;
 HTTPClient httpClient;
 
 U8G2_SH1106_128X64_NONAME_F_HW_I2C screen(U8G2_R0, U8X8_PIN_NONE, SCL, SDA);
+
+ScreenStatus screenStatusCfx = {
+  .screenCurrentIndex = 0,
+  .currentBlinkingTimeField = 0,
+  .timeChange = 0
+};
 
 TaskHandle_t readDHT_handle;
 TaskHandle_t readPulseSensor_handle;
@@ -82,13 +95,17 @@ QueueHandle_t screenOpenWeather_handle;
 
 SemaphoreHandle_t screenDisplaySemaphore_handle;
 
-void IRAM_ATTR screenButtonISR(){
+void IRAM_ATTR screenButtonsISR(){
   unsigned long currentTime = millis();
   if(currentTime - lastScreenChangeTime > DEBOUNCE_TIME){
     BaseType_t higherPriorityTaskWoken = pdFALSE;
     xSemaphoreGiveFromISR(screenDisplaySemaphore_handle, &higherPriorityTaskWoken);
     Serial.println("SEMAPHORE DONEEEEEEEEEEEEEEEEEEEEEEE EEEE");
-    lastScreenChangeTime = currentTime;
+    //ESP_LOGI();
+    if(digitalRead(SCREEN_CHANGE_BUTTON) == LOW){
+      screenStatusCfx.screenCurrentIndex = (screenStatusCfx.screenCurrentIndex + 1)%4;
+      lastScreenChangeTime = currentTime;
+    }
     if(higherPriorityTaskWoken){
       portYIELD_FROM_ISR();
     }
@@ -282,19 +299,22 @@ void screenDisplay(void *parameters){
   openWeatherJSONParsed weatherInfoBuffer;
 
   for(;;){
+    
+    /*
     if(xSemaphoreTake(screenDisplaySemaphore_handle, pdMS_TO_TICKS(150))){
       currentScreenIndex = (currentScreenIndex+1)%4;
     }
+    */
 
-    if(currentScreenIndex == 0){
+    if(screenStatusCfx.screenCurrentIndex == 0){
       xQueueReceive(screenRTCQueue_handle, &tmInfoBuffer, pdMS_TO_TICKS(10));
       screen.clearBuffer();
       screen.setFont(u8g2_font_helvB12_te);
-      screen.drawStr(30,25, tmInfoBuffer.time.c_str());
+      screen.drawStr(40,25, tmInfoBuffer.time.substring(0,5).c_str());
       screen.setFont(u8g2_font_helvR08_te);
       screen.drawStr(20,50, tmInfoBuffer.date.c_str());
       screen.sendBuffer();
-    }else if(currentScreenIndex == 1){
+    }else if(screenStatusCfx.screenCurrentIndex == 1){
       xQueueReceive(screenDHTQueue_handle, &TempRHvaluesBuffer, pdMS_TO_TICKS(10));
       screen.clearBuffer();
       screen.setFont(u8g2_font_helvB10_te);
@@ -303,7 +323,7 @@ void screenDisplay(void *parameters){
       screen.setCursor(30,50);
       screen.printf("RH = %.2f", TempRHvaluesBuffer.rh);
       screen.sendBuffer();
-    }else if(currentScreenIndex == 2){
+    }else if(screenStatusCfx.screenCurrentIndex == 2){
       xQueueReceive(screenPulseQueue_handle, &pulseReadingBuffer, pdMS_TO_TICKS(10));
       screen.clearBuffer();
       screen.setFont(u8g2_font_helvB12_te);
@@ -338,9 +358,9 @@ void setup(){
   
   dht.begin();
 
-  pinMode(SCREEN_BUTTON, INPUT_PULLUP);
+  pinMode(SCREEN_CHANGE_BUTTON, INPUT_PULLUP);
   
-  attachInterrupt(digitalPinToInterrupt(SCREEN_BUTTON), (void (*)())screenButtonISR, FALLING);
+  attachInterrupt(digitalPinToInterrupt(SCREEN_CHANGE_BUTTON), screenButtonsISR, FALLING);
 
   screenDisplaySemaphore_handle = xSemaphoreCreateBinary();
 
@@ -368,7 +388,7 @@ void setup(){
   xTaskCreatePinnedToCore(
     readDHT,
     "DHT SENSOR READING TASK",
-    2048,
+    1150,
     NULL,
     1,
     &readDHT_handle,
