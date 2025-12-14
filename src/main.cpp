@@ -457,7 +457,7 @@ void setup(){
   xTaskCreatePinnedToCore(
     readDHT,
     "DHT SENSOR READING TASK",
-    1150,
+    2000,
     NULL,
     1,
     &readDHT_handle,
