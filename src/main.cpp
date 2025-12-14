@@ -82,9 +82,9 @@ typedef struct{
 }openWeatherJSONParsed;
 
 typedef struct{
-  uint8_t screenCurrentIndex;         //  the current screen number showed on the OLED (0-3)
-  uint8_t currentBlinkingTimeField;   //  the current binking part of Time and date (0-5)
-  uint8_t timeChange;                 //  the new change added to the offsets
+  volatile uint8_t screenCurrentIndex;         //  the current screen number showed on the OLED (0-3)
+  volatile uint8_t currentBlinkingTimeField;   //  the current binking part of Time and date (0-5)
+  volatile uint8_t timeChange;                 //  the new change added to the offsets
 }ScreenStatus;
 
 openWeatherJSONParsed weatherInfo;
@@ -157,7 +157,7 @@ void IRAM_ATTR screenTimeDateEditEnableButtonISR(){
 }
 
 
-void IRAM_ATTR screenTimeIncreaseButtonISR(){
+void IRAM_ATTR screenTimeIncrementButtonISR(){
   unsigned long currentTime = millis();
   if(currentTime - lastTimeIncremennt > DEBOUNCE_TIME){
     
@@ -165,7 +165,7 @@ void IRAM_ATTR screenTimeIncreaseButtonISR(){
     BaseType_t higherPriorityTaskAwaken = pdFALSE;
     xSemaphoreGiveFromISR(timeIncerementSemaphore_handle, &higherPriorityTaskAwaken);
 
-    switch(screenStatusCfx.currentBlinkingTimeField){
+    /*switch(screenStatusCfx.currentBlinkingTimeField){
     case 0: 
       break;
     case 1: 
@@ -184,11 +184,9 @@ void IRAM_ATTR screenTimeIncreaseButtonISR(){
       timeOffsetsCfx.yearOffset++;
       break;
 
-    }
+    }*/
 
-    if(higherPriorityTaskAwaken = pdTRUE){
-      portYIELD_FROM_ISR();
-    }
+    portYIELD_FROM_ISR(higherPriorityTaskAwaken);
   }
   
 }
@@ -202,7 +200,7 @@ void IRAM_ATTR screenTimeDecremntButtonISR(){
     BaseType_t higherPriorityTaskAwaken = pdFALSE;
     xSemaphoreGiveFromISR(timeDecrementSemaphore_handle, &higherPriorityTaskAwaken);
 
-    switch(screenStatusCfx.currentBlinkingTimeField){
+    /*switch(screenStatusCfx.currentBlinkingTimeField){
     case 0: 
       break;
     case 1: 
@@ -221,11 +219,9 @@ void IRAM_ATTR screenTimeDecremntButtonISR(){
       timeOffsetsCfx.yearOffset++;
       break;
 
-    }
+    }*/
 
-    if(higherPriorityTaskAwaken = pdTRUE){
-      portYIELD_FROM_ISR();
-    }
+    portYIELD_FROM_ISR(higherPriorityTaskAwaken);
   }
   
 }
@@ -354,6 +350,63 @@ void readRTC(void *parameters){
 
   for(;;){
     if(getLocalTime(&timeInfo)){
+
+      if(xSemaphoreTake(timeIncerementSemaphore_handle, pdMS_TO_TICKS(0))){
+        switch (screenStatusCfx.currentBlinkingTimeField)
+        {
+        case 0:
+          break;
+        case 1:
+          timeInfo.tm_min += 1;
+          break;
+        case 2:
+          timeInfo.tm_hour += 1;
+          break;
+        case 3:
+          timeInfo.tm_mday += 1;
+          timeInfo.tm_wday += 1;
+          timeInfo.tm_yday += 1;
+          break;
+        case 4:
+          timeInfo.tm_mon += 1;
+          break;
+        case 5:
+          timeInfo.tm_year += 1;
+          break;
+        default:
+          break;
+        }
+        rtc.setTimeStruct(timeInfo);
+      }
+
+      if(xSemaphoreTake(timeDecrementSemaphore_handle, pdMS_TO_TICKS(0))){
+        switch (screenStatusCfx.currentBlinkingTimeField)
+        {
+        case 0:
+          break;
+        case 1:
+          timeInfo.tm_min -= 1;
+          break;
+        case 2:
+          timeInfo.tm_hour -= 1;
+          break;
+        case 3:
+          timeInfo.tm_mday -= 1;
+          timeInfo.tm_wday -= 1;
+          timeInfo.tm_yday -= 1;
+          break;
+        case 4:
+          timeInfo.tm_mon -= 1;
+          break;
+        case 5:
+          timeInfo.tm_year -= 1;
+          break;
+        default:
+          break;
+        }
+        rtc.setTimeStruct(timeInfo);
+      }
+
       strTime.date = rtc.getDate(false);
       strTime.time = rtc.getTime();
       strTime.AmPm = rtc.getAmPm(true);
@@ -541,32 +594,44 @@ void setup(){
 
   pinMode(SCREEN_CHANGE_BUTTON, INPUT_PULLUP);
   pinMode(TIME_EDIT_ENABLE_BUTTON, INPUT_PULLUP);
-  
+  pinMode(TIME_INCREMENT_BUTTON, INPUT_PULLUP);
+  pinMode(TIME_DECREMENT_BUTTON, INPUT_PULLUP);
+
   attachInterrupt(digitalPinToInterrupt(SCREEN_CHANGE_BUTTON),  screenChangeButtonISR, FALLING);
   attachInterrupt(digitalPinToInterrupt(TIME_EDIT_ENABLE_BUTTON), screenTimeDateEditEnableButtonISR, FALLING);
-
+  attachInterrupt(digitalPinToInterrupt(TIME_INCREMENT_BUTTON), screenTimeIncrementButtonISR, FALLING);
+  attachInterrupt(digitalPinToInterrupt(TIME_DECREMENT_BUTTON), screenTimeDecremntButtonISR, FALLING); 
+  
   screenDisplaySemaphore_handle = xSemaphoreCreateBinary();
+  timeIncerementSemaphore_handle = xSemaphoreCreateBinary();
+  timeDecrementSemaphore_handle = xSemaphoreCreateBinary();
 
   screenRTCQueue_handle = xQueueCreate(1, sizeof(timeStrings));
   screenDHTQueue_handle = xQueueCreate(SCREEN_DHT_QUEUE_SIZE, sizeof(DHT_sensor_data));
   screenPulseQueue_handle = xQueueCreate(SCREEN_PULSE_QUEUE_SIZE, sizeof(uint16_t));
   screenOpenWeather_handle = xQueueCreate(SCREEN_WEATHER_API_QUEUE_SIZE, sizeof(openWeatherJSONParsed));
 
+  Wire.begin();
+  screen.begin();
+
   WiFi.mode(WIFI_STA); // Set to station mode
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("Connecting to %s", WIFI_SSID);
 
+  String StartScreenFrames[] = {"Connecting", "Connecting.", "Connecting..","Connecting..."};
+  
   while(WiFi.status() != WL_CONNECTED){
+    for(int i=0; i<4; i++){
+      screen.clearBuffer();
+      screen.setFont(u8g2_font_helvB12_te);
+      screen.drawStr(20,40, StartScreenFrames[i].c_str());
+      screen.sendBuffer();
+    }
     Serial.print(".");
-    delay(250);
+    delay(100);
   }
 
   configTime(gmOffset, dayLightSaving, ntpServer1, ntpServer2);
-
-
-  Wire.begin();
-  screen.begin();
-
 
   xTaskCreatePinnedToCore(
     readDHT,
