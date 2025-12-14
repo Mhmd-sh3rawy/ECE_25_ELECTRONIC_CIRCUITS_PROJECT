@@ -19,10 +19,14 @@
 
 #define SCREEN_CHANGE_BUTTON 18
 #define TIME_EDIT_ENABLE_BUTTON 32
+#define TIME_INCREMENT_BUTTON 25
+#define TIME_DECREMENT_BUTTON 26
 #define DEBOUNCE_TIME 250
 
 unsigned long lastScreenChangeTime = 0;
 unsigned long lastTimeEditEnablePressed = 0;
+unsigned long lastTimeIncremennt = 0;
+unsigned long lastTimeDecrement = 0;
 
 #define DHTPIN 13
 #define DHTTYPE DHT11
@@ -96,7 +100,7 @@ ScreenStatus screenStatusCfx = {
   .timeChange = 0
 };
 
-/*
+
 timeOffsets timeOffsetsCfx = {
   .minOffset = 0,
   .hrOffset = 0,
@@ -104,7 +108,7 @@ timeOffsets timeOffsetsCfx = {
   .monthOffset = 0,
   .yearOffset = 0,
 };
-*/
+
 
 TaskHandle_t readDHT_handle;
 TaskHandle_t readPulseSensor_handle;
@@ -124,6 +128,8 @@ QueueHandle_t screenOpenWeather_handle;
 #define SCREEN_WEATHER_API_QUEUE_SIZE 1
 
 SemaphoreHandle_t screenDisplaySemaphore_handle;
+SemaphoreHandle_t timeIncerementSemaphore_handle;
+SemaphoreHandle_t timeDecrementSemaphore_handle;
 
 void IRAM_ATTR screenChangeButtonISR(){
   unsigned long currentTime = millis();
@@ -150,16 +156,23 @@ void IRAM_ATTR screenTimeDateEditEnableButtonISR(){
   }
 }
 
-/*
-void IRAM_ATTR screenTimeDateIncreaseButton(){
-  switch(screenStatusCfx.currentBlinkingTimeField){
+
+void IRAM_ATTR screenTimeIncreaseButtonISR(){
+  unsigned long currentTime = millis();
+  if(currentTime - lastTimeIncremennt > DEBOUNCE_TIME){
+    
+    lastTimeIncremennt = currentTime;
+    BaseType_t higherPriorityTaskAwaken = pdFALSE;
+    xSemaphoreGiveFromISR(timeIncerementSemaphore_handle, &higherPriorityTaskAwaken);
+
+    switch(screenStatusCfx.currentBlinkingTimeField){
     case 0: 
       break;
     case 1: 
       timeOffsetsCfx.minOffset = (timeOffsetsCfx.minOffset + 1)%60;
       break;
     case 2: 
-      timeOffsetsCfx.hrOffset = (timeOffsetsCfx.hrOffset)%24;
+      timeOffsetsCfx.hrOffset = (timeOffsetsCfx.hrOffset + 1)%24;
       break;
     case 3: 
       timeOffsetsCfx.dayOffset = (timeOffsetsCfx.dayOffset + 1)%7;
@@ -171,9 +184,52 @@ void IRAM_ATTR screenTimeDateIncreaseButton(){
       timeOffsetsCfx.yearOffset++;
       break;
 
+    }
+
+    if(higherPriorityTaskAwaken = pdTRUE){
+      portYIELD_FROM_ISR();
+    }
   }
+  
 }
-*/
+
+
+void IRAM_ATTR screenTimeDecremntButtonISR(){
+  unsigned long currentTime = millis();
+  if(currentTime - lastTimeDecrement > DEBOUNCE_TIME){
+    
+    lastTimeDecrement = currentTime;
+    BaseType_t higherPriorityTaskAwaken = pdFALSE;
+    xSemaphoreGiveFromISR(timeDecrementSemaphore_handle, &higherPriorityTaskAwaken);
+
+    switch(screenStatusCfx.currentBlinkingTimeField){
+    case 0: 
+      break;
+    case 1: 
+      timeOffsetsCfx.minOffset = (timeOffsetsCfx.minOffset -1)%60;
+      break;
+    case 2: 
+      timeOffsetsCfx.hrOffset = (timeOffsetsCfx.hrOffset - 1)%24;
+      break;
+    case 3: 
+      timeOffsetsCfx.dayOffset = (timeOffsetsCfx.dayOffset - 1)%7;
+      break;
+    case 4:
+      timeOffsetsCfx.monthOffset = (timeOffsetsCfx.monthOffset - 1)%12;
+      break;
+    case 5:
+      timeOffsetsCfx.yearOffset++;
+      break;
+
+    }
+
+    if(higherPriorityTaskAwaken = pdTRUE){
+      portYIELD_FROM_ISR();
+    }
+  }
+  
+}
+
 
 /*
 void testInterrupt(void *parameters){
