@@ -581,6 +581,7 @@ void screenDisplay(void *parameters){
   DHT_sensor_data TempRHvaluesBuffer;
   uint16_t pulseReadingBuffer;
   openWeatherJSONParsed weatherInfoBuffer;
+  AdhanTimings adhanBuffer; 
   String timeDateFrames[7];
 
   bool currentBlinkingState = false;
@@ -647,7 +648,7 @@ void screenDisplay(void *parameters){
       screen.setCursor(50,50);
       screen.print(pulseReadingBuffer);
       screen.sendBuffer();
-    }else{
+    }else if(screenStatusCfx.screenCurrentIndex == 3){
       xQueueReceive(screenOpenWeather_handle, &weatherInfoBuffer, pdMS_TO_TICKS(10));
       screen.clearBuffer();
       screen.setFont(u8g2_font_helvB08_tr);
@@ -662,8 +663,53 @@ void screenDisplay(void *parameters){
       screen.print("wind speed: ");
       screen.print(weatherInfoBuffer.windSpeed);
       screen.sendBuffer();
+    }else{
+      xQueueReceive(screenAdhanQueue_handle, &adhanBuffer, pdMS_TO_TICKS(10));
+      
+      if(adhanBuffer.valid){
+        screen.clearBuffer();
+        screen.setFont(u8g2_font_helvB08_tr);
+        
+        // Title
+        screen.drawStr(35, 10, "Prayer Times");
+        
+        // Display prayer times in compact format
+        screen.setFont(u8g2_font_6x10_tr);
+        
+        screen.setCursor(5, 22);
+        screen.print("Fajr: ");
+        screen.print(adhanBuffer.fajr.substring(0, 5)); // Show HH:MM only
+        
+        screen.setCursor(5, 33);
+        screen.print("Dhuhr: ");
+        screen.print(adhanBuffer.dhuhr.substring(0, 5));
+        
+        screen.setCursor(5, 44);
+        screen.print("Asr: ");
+        screen.print(adhanBuffer.asr.substring(0, 5));
+        
+        screen.setCursor(70, 22);
+        screen.print("Maghrib: ");
+        screen.print(adhanBuffer.maghrib.substring(0, 5));
+        
+        screen.setCursor(70, 33);
+        screen.print("Isha: ");
+        screen.print(adhanBuffer.isha.substring(0, 5));
+        
+        // Hijri date at bottom
+        screen.setCursor(15, 60);
+        screen.print(adhanBuffer.hijriDate);
+        
+        screen.sendBuffer();
+      } else {
+        // Show error message if API failed
+        screen.clearBuffer();
+        screen.setFont(u8g2_font_helvB10_te);
+        screen.drawStr(10, 32, "Prayer Times");
+        screen.drawStr(20, 48, "Loading...");
+        screen.sendBuffer();
+      }
     }
-
     Serial.print("Free sceeenDisplay Stack: ");
     Serial.println(uxTaskGetStackHighWaterMark(screenDisplay_handle));
 
@@ -770,7 +816,7 @@ void setup(){
     &adhanTask_handle,
     1
   );
-  
+
   xTaskCreatePinnedToCore(
     screenDisplay,
     "OLED DISPLAY TASK",
