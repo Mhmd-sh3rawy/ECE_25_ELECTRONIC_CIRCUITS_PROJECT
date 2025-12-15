@@ -46,7 +46,7 @@ String city = "Tanta";
 String countryCode = "EG";
 String openWeatherUrl = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + countryCode + "&APPID=" + APIKey;
 
-String adhanApiUrl = "http://api.aladhan.com/v1/timingsByCity?city=" + city + "&country=" + countryCode + "&method=5";
+String adhanApiUrl = "https://api.aladhan.com/v1/timings/15-12-2025?latitude=30.7885&longitude=31.0019&method=5";
 
 typedef struct{
   String date;
