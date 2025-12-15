@@ -11,22 +11,33 @@
 #include <Wire.h>
 /*  The standard lib for SH106 drivers  */
 #include <U8g2lib.h>
+/*  MPU6050 lib  */
+#include <MPU6050.h>
 /*  Parsing and getting JSON APIs  */
 #include <HTTPClient.h>
 #include <Arduino_JSON.h>
 /*  Handling credentials   */
 #include <credentials.h>
 
+
+/*  Buttons Pins & debounce Time  */
 #define SCREEN_CHANGE_BUTTON 18
 #define TIME_EDIT_ENABLE_BUTTON 32
 #define TIME_INCREMENT_BUTTON 25
 #define TIME_DECREMENT_BUTTON 26
 #define DEBOUNCE_TIME 250
 
+/* Buttons last Time Pressed */
 unsigned long lastScreenChangeTime = 0;
 unsigned long lastTimeEditEnablePressed = 0;
 unsigned long lastTimeIncremennt = 0;
 unsigned long lastTimeDecrement = 0;
+unsigned long lastStepCountReset = 0;
+
+/* MPU6050 super-params  */
+#define THRESHOLD 1.0 
+#define BUFFER_LENGTH 15 
+#define DEBOUNCE_DELAY 300 
 
 #define DHTPIN 13
 #define DHTTYPE DHT11
@@ -36,6 +47,8 @@ unsigned long lastTimeDecrement = 0;
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
 ESP32Time rtc(0);
+
+MPU6050 mpu;
 
 #define gmOffset 7200     // (GMT+2) in seconds
 #define dayLightSaving 0 
@@ -68,6 +81,12 @@ typedef struct{
   int month;
   int day;
 }timeInt;
+
+typedef struct {
+  int stepCount;
+  float avgMagnitude;
+  bool stepDetected;
+} StepData;
 
 typedef struct{
   float temp;       // stands for Temperature obviusly!!
@@ -115,6 +134,9 @@ TaskHandle_t readPulseSensor_handle;
 TaskHandle_t readRTC_handle;
 TaskHandle_t openWeatherTask_handle;
 TaskHandle_t screenDisplay_handle;
+TaskHandle_t readMPU_handle;        
+TaskHandle_t stepDetection_handle;  
+TaskHandle_t displayUpdate_handle;
 
 QueueHandle_t screenRTCQueue_handle;
 
@@ -127,9 +149,16 @@ QueueHandle_t screenPulseQueue_handle;
 QueueHandle_t screenOpenWeather_handle;
 #define SCREEN_WEATHER_API_QUEUE_SIZE 1
 
+QueueHandle_t mpuDataQueue_handle;  
+QueueHandle_t stepDataQueue_handle; 
+QueueHandle_t displayQueue_handle; 
+
 SemaphoreHandle_t screenDisplaySemaphore_handle;
 SemaphoreHandle_t timeIncerementSemaphore_handle;
 SemaphoreHandle_t timeDecrementSemaphore_handle;
+SemaphoreHandle_t resetSemaphore_handle;
+
+volatile int globalStepCount = 0;
 
 void IRAM_ATTR screenChangeButtonISR(){
   unsigned long currentTime = millis();
@@ -138,7 +167,7 @@ void IRAM_ATTR screenChangeButtonISR(){
     //xSemaphoreGiveFromISR(screenDisplaySemaphore_handle, &higherPriorityTaskWoken);
     //Serial.println("SEMAPHORE DONEEEEEEEEEEEEEEEEEEEEEEE EEEE");
     //ESP_LOGI();
-    screenStatusCfx.screenCurrentIndex = (screenStatusCfx.screenCurrentIndex + 1)%4;
+    screenStatusCfx.screenCurrentIndex = (screenStatusCfx.screenCurrentIndex + 1)%5;
     lastScreenChangeTime = currentTime;
     //Serial.print("LINE IN ISR SCREEN_CHANGE");
     /*if(higherPriorityTaskWoken){
@@ -226,6 +255,16 @@ void IRAM_ATTR screenTimeDecremntButtonISR(){
   
 }
 
+void IRAM_ATTR resetStepCountsISR(){
+  unsigned long currentTime = millis();
+  if(currentTime - lastStepCountReset > DEBOUNCE_TIME){
+    lastStepCountReset = currentTime;
+    BaseType_t higherPriorityTaskAwaken = pdFALSE;
+    xSemaphoreGiveFromISR(resetSemaphore_handle, &higherPriorityTaskAwaken);
+    portYIELD_FROM_ISR(higherPriorityTaskAwaken);
+  }
+}
+
 
 /*
 void testInterrupt(void *parameters){
@@ -236,6 +275,96 @@ void testInterrupt(void *parameters){
   }
 }
 */
+
+void readMPU(void* parameters) {
+  float accelerationData[3];
+  
+  for(;;) {
+    // قراءة البيانات من MPU-6050
+    int16_t ax, ay, az;
+    mpu.getAcceleration(&ax, &ay, &az);
+    
+    // تحويل للـ g (±16g range)
+    accelerationData[0] = ax / 2048.0;
+    accelerationData[1] = ay / 2048.0;
+    accelerationData[2] = az / 2048.0;
+    
+    // إرسال البيانات إلى الطابور
+    xQueueSend(mpuDataQueue_handle, &accelerationData, portMAX_DELAY);
+    
+    Serial.print("Free MPU Stack: ");
+    Serial.println(uxTaskGetStackHighWaterMark(readMPU_handle));
+    
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+void stepDetection(void* parameters) {
+  float buffer[BUFFER_LENGTH] = {0};
+  int bufferIndex = 0;
+  float accelerationData[3];
+  unsigned long lastStepTime = 0;
+  StepData stepData = {0, 0, false};
+  
+  for(;;) {
+    // استقبال بيانات التسارع
+    if(xQueueReceive(mpuDataQueue_handle, &accelerationData, pdMS_TO_TICKS(50))) {
+      
+      // حساب المقدار الكلي
+      float accelerationMagnitude = sqrt(
+        accelerationData[0] * accelerationData[0] +
+        accelerationData[1] * accelerationData[1] +
+        accelerationData[2] * accelerationData[2]
+      );
+      
+      // إضافة للبفر
+      buffer[bufferIndex] = accelerationMagnitude;
+      bufferIndex = (bufferIndex + 1) % BUFFER_LENGTH;
+      
+      // حساب المتوسط
+      float avgMagnitude = 0;
+      for (int i = 0; i < BUFFER_LENGTH; i++) {
+        avgMagnitude += buffer[i];
+      }
+      avgMagnitude /= BUFFER_LENGTH;
+      
+      stepData.avgMagnitude = avgMagnitude;
+      
+      unsigned long currentMillis = millis();
+      
+      // كشف الخطوة
+      if (accelerationMagnitude > (avgMagnitude + THRESHOLD)) {
+        if (!stepData.stepDetected && (currentMillis - lastStepTime) > DEBOUNCE_DELAY) {
+          globalStepCount++;
+          stepData.stepCount = globalStepCount;
+          stepData.stepDetected = true;
+          lastStepTime = currentMillis;
+          
+          Serial.print("👟 Step detected! Total: ");
+          Serial.println(globalStepCount);
+          
+          // إرسال تحديث للشاشة
+          xQueueOverwrite(stepDataQueue_handle, &stepData);
+        }
+      } else {
+        stepData.stepDetected = false;
+      }
+      
+      // التحقق من إعادة تعيين العداد
+      if(xSemaphoreTake(resetSemaphore_handle, 0)) {
+        globalStepCount = 0;
+        stepData.stepCount = 0;
+        Serial.println("🔄 Step counter reset!");
+        xQueueOverwrite(stepDataQueue_handle, &stepData);
+      }
+    }
+    
+    Serial.print("Free StepDetection Stack: ");
+    Serial.println(uxTaskGetStackHighWaterMark(stepDetection_handle));
+    
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
 
 void readDHT(void* parameters){
   DHT_sensor_data TempRHvalues;
@@ -510,6 +639,7 @@ void screenDisplay(void *parameters){
   String timeDateFrames[7];
 
   bool currentBlinkingState = false;
+  StepData stepData = {0, 0, false};
 
   //int x;
   //int y;
@@ -573,7 +703,7 @@ void screenDisplay(void *parameters){
       screen.setCursor(50,50);
       screen.print(pulseReadingBuffer);
       screen.sendBuffer();
-    }else{
+    }else if(screenStatusCfx.screenCurrentIndex == 3){
       xQueueReceive(screenOpenWeather_handle, &weatherInfoBuffer, pdMS_TO_TICKS(10));
       screen.clearBuffer();
       screen.setFont(u8g2_font_helvB08_tr);
@@ -587,6 +717,32 @@ void screenDisplay(void *parameters){
       screen.setCursor(14,47);
       screen.print("wind speed: ");
       screen.print(weatherInfoBuffer.windSpeed);
+      screen.sendBuffer();
+    }else{
+      
+      xQueueReceive(stepDataQueue_handle, &stepData, pdMS_TO_TICKS(100));
+      
+      screen.clearBuffer();
+      screen.drawFrame(0, 0, 128, 64);
+      
+      screen.setFont(u8g2_font_ncenB08_tr);
+      screen.drawStr(25, 12, "Step Counter");
+      
+      screen.drawLine(5, 15, 123, 15);
+      
+      screen.setFont(u8g2_font_logisoso20_tn);
+      String steps = String(stepData.stepCount);
+      int textWidth = steps.length() * 12;
+      screen.setCursor((128 - textWidth) / 2, 40);
+      screen.print(stepData.stepCount);
+
+      screen.setFont(u8g2_font_6x10_tr);
+      screen.drawStr(45, 52, "Steps");
+    
+      screen.setFont(u8g2_font_5x7_tr);
+      String ip = WiFi.localIP().toString();
+      screen.setCursor(2, 62);
+      screen.print("IP: " + ip);
       screen.sendBuffer();
     }
 
@@ -618,14 +774,38 @@ void setup(){
   screenDisplaySemaphore_handle = xSemaphoreCreateBinary();
   timeIncerementSemaphore_handle = xSemaphoreCreateBinary();
   timeDecrementSemaphore_handle = xSemaphoreCreateBinary();
+  resetSemaphore_handle = xSemaphoreCreateBinary();
 
   screenRTCQueue_handle = xQueueCreate(1, sizeof(timeStrings));
   screenDHTQueue_handle = xQueueCreate(SCREEN_DHT_QUEUE_SIZE, sizeof(DHT_sensor_data));
   screenPulseQueue_handle = xQueueCreate(SCREEN_PULSE_QUEUE_SIZE, sizeof(uint16_t));
   screenOpenWeather_handle = xQueueCreate(SCREEN_WEATHER_API_QUEUE_SIZE, sizeof(openWeatherJSONParsed));
+  mpuDataQueue_handle = xQueueCreate(10, sizeof(float) * 3);
+  stepDataQueue_handle = xQueueCreate(1, sizeof(StepData));
+  displayQueue_handle = xQueueCreate(1, sizeof(StepData));
 
   Wire.begin();
   screen.begin();
+
+  Serial.println("Initializing MPU-6050...");
+  mpu.initialize();
+  
+  if (!mpu.testConnection()) {
+    Serial.println("❌ MPU-6050 connection failed!");
+    screen.clearBuffer();
+    screen.drawStr(5, 20, "MPU-6050 Error!");
+    screen.setFont(u8g2_font_5x7_tr);
+    screen.drawStr(5, 35, "Check wiring:");
+    screen.drawStr(5, 50, "VCC->3.3V GND->GND");
+    screen.drawStr(5, 58, "SCL->22 SDA->21");
+    screen.sendBuffer();
+    while (1) delay(1000);
+  }
+  
+  Serial.println(" MPU-6050 connected!");
+
+  mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_16);
+  mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);
 
   WiFi.mode(WIFI_STA); // Set to station mode
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -683,6 +863,27 @@ void setup(){
     NULL,
     1,
     &openWeatherTask_handle,
+    1
+  );
+
+
+  xTaskCreatePinnedToCore(
+    readMPU,
+    "MPU6050 Reading Task",
+    3000,
+    NULL,
+    2,
+    &readMPU_handle,
+    1
+  );
+  
+  xTaskCreatePinnedToCore(
+    stepDetection,
+    "Step Detection Task",
+    4000,
+    NULL,
+    2,
+    &stepDetection_handle,
     1
   );
 
