@@ -277,70 +277,83 @@ void readDHT(void* parameters){
 
 void readPulseSensor(void *parameters){
   uint32_t lastPeakTime = 0;
-  uint16_t threshold = 2650;
-  uint32_t timeDelay = 400;
+  uint16_t threshold = 2450;
+  uint32_t timeDelay = 450;
+  static uint32_t lastPrintTime = 0;
   bool pulseOcurred = false;
 
   uint8_t READING_NUM = 10;
   uint8_t CURRENT_INDEX = 0;
-  uint16_t lastPulses[READING_NUM] = {0,0,0,0,0,0,0,0,0,0};
+  uint16_t lastPulses[READING_NUM] = {0};
 
   uint16_t signal;
   uint16_t BPM = 0;
   uint16_t tempBPM;
 
   for(;;){
-    signal = analogRead(PULSE_PIN);
-
+        // condetion to make sensor read at his screen
+    if(screenStatusCfx.screenCurrentIndex != 2){
+      vTaskDelay(pdMS_TO_TICKS(200));
+      continue;
+    }
+  
+    signal = analogRead(PULSE_PIN);  // read sensor signal
+    Serial.print("[Pulse] Raw Signal = ");
+    Serial.println(signal);
+    Serial.print("[Pulse] BPM = ");
+    Serial.println(BPM);
+       // soft delay to read from serial_monitor
+    if(millis() - lastPrintTime > 500){   
+      Serial.print("[Pulse] Raw = ");
+      Serial.print(signal);
+      Serial.print(" | BPM = ");
+      Serial.println(BPM);
+      lastPrintTime = millis();
+}
+        
     if(signal > threshold && !pulseOcurred){
-      
       uint32_t currentTime = millis();
 
       if(currentTime - lastPeakTime > timeDelay){
-
         tempBPM = 60000 / (currentTime - lastPeakTime);
-        
-        if(tempBPM>40 && tempBPM<120){
+
+        if(tempBPM > 40 && tempBPM < 120){
           lastPulses[CURRENT_INDEX] = tempBPM;
-          CURRENT_INDEX = (CURRENT_INDEX+1)%10;
+          CURRENT_INDEX = (CURRENT_INDEX + 1) % READING_NUM;
         }
 
         lastPeakTime = currentTime;
-        pulseOcurred = !pulseOcurred;
-
+        pulseOcurred = true;
       }
 
       uint16_t sumBPM = 0;
       uint8_t validReading = 0;
 
-      for(int i=0;i<READING_NUM;i++){
-        if(lastPulses[i]>0){
-            sumBPM += lastPulses[i];
-            validReading++;
+      for(int i = 0; i < READING_NUM; i++){
+        if(lastPulses[i] > 0){
+          sumBPM += lastPulses[i];
+          validReading++;
         }
       }
-      
-      if(validReading>0){
-        BPM = sumBPM/validReading;
+
+      if(validReading > 0){
+        BPM = sumBPM / validReading;
+      }
+      if(screenStatusCfx.screenCurrentIndex != 2){
+        Serial.println("[Pulse] Waiting for BPM screen...");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        continue;
       }
 
-      Serial.print("Current BPM = ");
-      Serial.println(BPM);
 
       xQueueSend(screenPulseQueue_handle, &BPM, portMAX_DELAY);
-
     }
 
-
-    if(signal < (threshold-100) && pulseOcurred){
-      pulseOcurred = !pulseOcurred;
+    if(signal < (threshold - 100) && pulseOcurred){
+      pulseOcurred = false;
     }
 
-    Serial.print("Free PulseSensor Stack: ");
-    Serial.println(uxTaskGetStackHighWaterMark(readPulseSensor_handle));
-
-    vTaskDelay(10/portTICK_PERIOD_MS);
-
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
