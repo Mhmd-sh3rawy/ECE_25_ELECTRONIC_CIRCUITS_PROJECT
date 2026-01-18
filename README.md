@@ -39,11 +39,11 @@ The firmware demonstrates professional embedded system design principles such as
 ---
 ## How to upload the code 
 
-Recommended to use *PlatformIO* and *VScode* to upload the code to the ESP32.
+Recommended to use *PlatformIO* and *VSCode* to upload the code to the ESP32.
 
-### For linux distros users
+### For Linux distros users
 
-go to the project directory and write the following commands, and edit your *WiFi* credentials as along with the *openWeatherAPI key*
+Go to the project directory and write the following commands, and edit your *WiFi* credentials, as well as along with the *openWeatherAPI key*
 ```
 cd lib/credentials
 cp credentials_template.h credentials.h
@@ -51,7 +51,8 @@ cp credentials_template.h credentials.h
 
 ### For windows user 
 
-just use the GUI to make a `lib/credentials/credentials.h` either by copying the template or renaming it. then update the credentials and the API key. finally upload the code
+Just use the GUI to make a `lib/credentials/credentials.h` either by copying the template or renaming it. Then update the credentials and the API key. finally upload the code
+
 ---
 
 ## System Architecture
