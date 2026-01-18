@@ -4,4 +4,4 @@
 .vscode/launch.json
 .vscode/ipch
 lib/credentials/credentials.h
-docs/
+docs/sha3raws_notes
