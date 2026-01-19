@@ -1,11 +1,28 @@
 # ESP32 FreeRTOS Smart Watch
 
 ## Overview
-This project implements a multi-sensor smart watch firmware based on **ESP32** and **FreeRTOS**.  
+This project implements a multi-sensor smart watch firmware based on ESP32 and FreeRTOS.  
 The system is designed as a real-time embedded application with multiple concurrent tasks handling sensing, processing, networking, and user interface rendering.
 
 The firmware demonstrates professional embedded system design principles such as task separation, inter-task communication, interrupt-driven inputs, and deterministic scheduling.
 
+---
+## Table of Contents
+1. [Overview](#overview)
+2. [Key Features](#key-features)
+3. [How to Upload the Code](#how-to-upload-the-code)
+   - [For Linux Distros Users](#for-linux-distros-users)
+   - [For Windows Users](#for-windows-user)
+4. [System Architecture](#system-architecture)
+5. [Tasks Overview](#tasks-overview)
+6. [Hardware Components](#hardware-components)
+7. [Pin Configuration](#pin-configuration)
+8. [Inter-Task Communication](#inter-task-communication)
+9. [Setup and Build](#setup-and-build)
+10. [Design Patterns Used](#design-patterns-used)
+11. [Known Limitations and Improvements](#known-limitations-and-improvements)
+12. [Project Structure](#project-structure)
+13. [References](#references)
 ---
 
 ## Key Features
@@ -20,9 +37,26 @@ The firmware demonstrates professional embedded system design principles such as
 - Queue- and semaphore-based inter-task communication
 
 ---
+## How to upload the code 
+
+Recommended to use *PlatformIO* and *VSCode* to upload the code to the ESP32.
+
+### For Linux distros users
+
+Go to the project directory and write the following commands, and edit your *WiFi* credentials, as well as along with the *openWeatherAPI key*
+```
+cd lib/credentials
+cp credentials_template.h credentials.h
+```
+
+### For windows user 
+
+Just use the GUI to make a `lib/credentials/credentials.h` either by copying the template or renaming it. Then update the credentials and the API key. finally upload the code
+
+---
 
 ## System Architecture
-The firmware follows a **producer-consumer** architecture:
+The firmware follows a producer-consumer architecture:
 
 - Sensor tasks produce data
 - Processing tasks analyze sensor data
@@ -30,6 +64,44 @@ The firmware follows a **producer-consumer** architecture:
 - Interrupts signal user input via semaphores
 
 All tasks are managed by the FreeRTOS kernel and pinned to a single ESP32 core for simplified synchronization.
+
+```text
+                 ┌──────────────────────┐
+                 │        ESP32         │
+                 │   FreeRTOS Kernel    │
+                 └───────────┬──────────┘
+                             │
+        ┌────────────────────┼─────────────────────┐
+        │                    │                     │
+┌───────▼───────┐   ┌────────▼────────┐   ┌────────▼────────┐
+│   ISRs        │   │  Sensor Tasks   │   │  Network Tasks  │
+│ (GPIO Buttons)│   │                 │   │                 │
+└───────┬───────┘   │ readDHT         │   │ OpenWeather API │
+        │           │ readPulse       │   │ NTP / RTC Sync  │
+        │           │ readMPU         │   └────────┬────────┘
+        │           └────────┬────────┘            │
+        │                    │                     │
+        │        ┌───────────▼───────────┐         │
+        │        │   Processing Task     │         │
+        │        │  Step Detection       │         │
+        │        └───────────┬───────────┘         │
+        │                    │                     │
+        └──────────────┬─────▼─────────────────────▼────────┐
+                       │        FreeRTOS IPC                │
+                       │  Queues + Binary Semaphores        │
+                       └──────────────┬─────────────────────┘
+                                      │
+                           ┌──────────▼──────────┐
+                           │  screenDisplay Task │
+                           │  (UI Renderer)      │
+                           └──────────┬──────────┘
+                                      │
+                           ┌──────────▼──────────┐
+                           │   SH1106 OLED       │
+                           │   (U8g2 / I2C)      │
+                           └─────────────────────┘
+
+```
 
 ---
 
@@ -70,11 +142,14 @@ All tasks are managed by the FreeRTOS kernel and pinned to a single ESP32 core f
 | 32   | Edit Enable Button |
 | 33   | Pulse Sensor (ADC) |
 
+<p align="center">
+  <img src="./assets/screenshot.png" alt="Centered Screenshot">
+</p>
 ---
 
 ## Inter-Task Communication
-- **Queues** are used to safely transfer sensor and processed data between tasks
-- **Binary Semaphores** are used for signaling events from ISRs to tasks
+- Queues are used to safely transfer sensor and processed data between tasks
+- Binary Semaphores are used for signaling events from ISRs to tasks
 - ISRs are minimal and defer logic to tasks, following FreeRTOS best practices
 
 ---
@@ -118,25 +193,20 @@ Planned enhancements include low-power modes, BLE integration, SD card logging, 
 - Display: Centralized UI rendering task
 
 ---
-
 ## References
-- ESP32 Technical Reference Manual  
-  https://www.espressif.com/en/products/socs/esp32/resources
 
-- FreeRTOS Official Documentation  
-  https://www.freertos.org/Documentation/RTOS_book.html
+- check our documentation in `docs/Technical_Reference_manual.pdf`
+- Introduction to freeRTOS by DigiKey on Youtube [playlist link](https://youtube.com/playlist?list=PLEBQazB0HUyQ4hAPU1cJED6t3DU0h34bz&si=BWHB7FbQ7ADQBW9W)
 
-- ESP32 FreeRTOS Integration  
-  https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/freertos.html
 
-- OpenWeather API Documentation  
-  https://openweathermap.org/api
+### Random Nerd Tutorials : 
 
-- MPU6050 Datasheet  
-  https://invensense.tdk.com/products/motion-tracking/6-axis/mpu-6050/
+-  *Getting Started with freeRTOS* : [link](https://randomnerdtutorials.com/esp32-freertos-arduino-tasks/)
 
----
+-  *Inter Task Communications Part1 - Queues -* : [link](https://randomnerdtutorials.com/esp32-freertos-queues-inter-task-arduino/)
 
-## License
-This project is intended for educational and research purposes.  
-You may modify and reuse it with proper attribution.
+-  *Getting Started with Semaphore* :  [link](https://randomnerdtutorials.com/esp32-freertos-semaphores-arduino/)
+
+-  *ESP32 FreeRTOS Mutex – Getting Started (Arduino IDE)* : [link](https://randomnerdtutorials.com/esp32-freertos-mutex-arduino/)   
+
+-  *ESP32 with FreeRTOS: Software Timers/Timer Interrupts (Arduino IDE)* : [link](https://randomnerdtutorials.com/esp32-freertos-software-timers-interrupts/)
