@@ -163,8 +163,16 @@ volatile int globalStepCount = 0;
 void IRAM_ATTR screenChangeButtonISR(){
   unsigned long currentTime = millis();
   if(currentTime - lastScreenChangeTime > DEBOUNCE_TIME){
+    //BaseType_t higherPriorityTaskWoken = pdFALSE;
+    //xSemaphoreGiveFromISR(screenDisplaySemaphore_handle, &higherPriorityTaskWoken);
+    //Serial.println("SEMAPHORE DONEEEEEEEEEEEEEEEEEEEEEEE EEEE");
+    //ESP_LOGI();
     screenStatusCfx.screenCurrentIndex = (screenStatusCfx.screenCurrentIndex + 1)%5;
     lastScreenChangeTime = currentTime;
+    //Serial.print("LINE IN ISR SCREEN_CHANGE");
+    /*if(higherPriorityTaskWoken){
+      portYIELD_FROM_ISR();
+    }*/
   }
 }
 
@@ -173,6 +181,7 @@ void IRAM_ATTR screenTimeDateEditEnableButtonISR(){
   if(currentTime - lastTimeEditEnablePressed > DEBOUNCE_TIME){
     lastTimeEditEnablePressed = currentTime;
     screenStatusCfx.currentBlinkingTimeField = (screenStatusCfx.currentBlinkingTimeField+1)%6;
+    //Serial.printf("Look AT MY NUMBERS == > %d \n", screenStatusCfx.currentBlinkingTimeField);
   }
 }
 
@@ -184,6 +193,28 @@ void IRAM_ATTR screenTimeIncrementButtonISR(){
     lastTimeIncremennt = currentTime;
     BaseType_t higherPriorityTaskAwaken = pdFALSE;
     xSemaphoreGiveFromISR(timeIncerementSemaphore_handle, &higherPriorityTaskAwaken);
+
+    /*switch(screenStatusCfx.currentBlinkingTimeField){
+    case 0: 
+      break;
+    case 1: 
+      timeOffsetsCfx.minOffset = (timeOffsetsCfx.minOffset + 1)%60;
+      break;
+    case 2: 
+      timeOffsetsCfx.hrOffset = (timeOffsetsCfx.hrOffset + 1)%24;
+      break;
+    case 3: 
+      timeOffsetsCfx.dayOffset = (timeOffsetsCfx.dayOffset + 1)%7;
+      break;
+    case 4:
+      timeOffsetsCfx.monthOffset = (timeOffsetsCfx.monthOffset + 1)%12;
+      break;
+    case 5:
+      timeOffsetsCfx.yearOffset++;
+      break;
+
+    }*/
+
     portYIELD_FROM_ISR(higherPriorityTaskAwaken);
   }
   
@@ -197,6 +228,28 @@ void IRAM_ATTR screenTimeDecremntButtonISR(){
     lastTimeDecrement = currentTime;
     BaseType_t higherPriorityTaskAwaken = pdFALSE;
     xSemaphoreGiveFromISR(timeDecrementSemaphore_handle, &higherPriorityTaskAwaken);
+
+    /*switch(screenStatusCfx.currentBlinkingTimeField){
+    case 0: 
+      break;
+    case 1: 
+      timeOffsetsCfx.minOffset = (timeOffsetsCfx.minOffset -1)%60;
+      break;
+    case 2: 
+      timeOffsetsCfx.hrOffset = (timeOffsetsCfx.hrOffset - 1)%24;
+      break;
+    case 3: 
+      timeOffsetsCfx.dayOffset = (timeOffsetsCfx.dayOffset - 1)%7;
+      break;
+    case 4:
+      timeOffsetsCfx.monthOffset = (timeOffsetsCfx.monthOffset - 1)%12;
+      break;
+    case 5:
+      timeOffsetsCfx.yearOffset++;
+      break;
+
+    }*/
+
     portYIELD_FROM_ISR(higherPriorityTaskAwaken);
   }
   
@@ -213,19 +266,30 @@ void IRAM_ATTR resetStepCountsISR(){
 }
 
 
+/*
+void testInterrupt(void *parameters){
+  for(;;){
+    if(xSemaphoreTake(screenDisplaySemaphore_handle, portMAX_DELAY)){
+      Serial.println("INTERRUPTTED SUCCESSFULLY");
+    }
+  }
+}
+*/
+
 void readMPU(void* parameters) {
   float accelerationData[3];
   
   for(;;) {
-   // read data from MPU 
+    // قراءة البيانات من MPU-6050
     int16_t ax, ay, az;
     mpu.getAcceleration(&ax, &ay, &az);
     
+    // تحويل للـ g (±16g range)
     accelerationData[0] = ax / 2048.0;
     accelerationData[1] = ay / 2048.0;
     accelerationData[2] = az / 2048.0;
     
-    // send data to Queue 
+    // إرسال البيانات إلى الطابور
     xQueueSend(mpuDataQueue_handle, &accelerationData, portMAX_DELAY);
     
     Serial.print("Free MPU Stack: ");
@@ -243,18 +307,21 @@ void stepDetection(void* parameters) {
   StepData stepData = {0, 0, false};
   
   for(;;) {
-    // recive accelerationData
+    // استقبال بيانات التسارع
     if(xQueueReceive(mpuDataQueue_handle, &accelerationData, pdMS_TO_TICKS(50))) {
-    // calculate the magnitude       
+      
+      // حساب المقدار الكلي
       float accelerationMagnitude = sqrt(
         accelerationData[0] * accelerationData[0] +
         accelerationData[1] * accelerationData[1] +
         accelerationData[2] * accelerationData[2]
       );
       
+      // إضافة للبفر
       buffer[bufferIndex] = accelerationMagnitude;
       bufferIndex = (bufferIndex + 1) % BUFFER_LENGTH;
-      // calc average 
+      
+      // حساب المتوسط
       float avgMagnitude = 0;
       for (int i = 0; i < BUFFER_LENGTH; i++) {
         avgMagnitude += buffer[i];
@@ -265,6 +332,7 @@ void stepDetection(void* parameters) {
       
       unsigned long currentMillis = millis();
       
+      // كشف الخطوة
       if (accelerationMagnitude > (avgMagnitude + THRESHOLD)) {
         if (!stepData.stepDetected && (currentMillis - lastStepTime) > DEBOUNCE_DELAY) {
           globalStepCount++;
@@ -275,13 +343,14 @@ void stepDetection(void* parameters) {
           Serial.print("👟 Step detected! Total: ");
           Serial.println(globalStepCount);
           
- 
+          // إرسال تحديث للشاشة
           xQueueOverwrite(stepDataQueue_handle, &stepData);
         }
       } else {
         stepData.stepDetected = false;
       }
       
+      // التحقق من إعادة تعيين العداد
       if(xSemaphoreTake(resetSemaphore_handle, 0)) {
         globalStepCount = 0;
         stepData.stepCount = 0;
@@ -484,6 +553,10 @@ void readRTC(void *parameters){
       strTime.time = rtc.getTime();
       strTime.AmPm = rtc.getAmPm(true);
 
+      //Serial.print(strTime.date);
+      //Serial.printf("  %s  %s \n", strTime.time, strTime.AmPm);
+
+      //xQueueSend(screenRTCQueue_handle, &strTime, 750/portTICK_PERIOD_MS);
       xQueueOverwrite(screenRTCQueue_handle, &strTime);
 
     }else{
@@ -568,6 +641,9 @@ void screenDisplay(void *parameters){
   bool currentBlinkingState = false;
   StepData stepData = {0, 0, false};
 
+  //int x;
+  //int y;
+
   for(;;){
 
     vTaskDelay(pdMS_TO_TICKS(400));
@@ -578,7 +654,12 @@ void screenDisplay(void *parameters){
       currentBlinkingState = !currentBlinkingState;
 
       if((screenStatusCfx.currentBlinkingTimeField==1 || screenStatusCfx.currentBlinkingTimeField==2) && currentBlinkingState==true){
-
+        //Serial.println("Here DePUg HerE");
+        /*if(screenStatusCfx.currentBlinkingTimeField==1){
+          x = 1;
+        }else{
+          x=2;
+        }*/
         screen.clearBuffer();
         screen.setFont(u8g2_font_helvB12_te);
         screen.drawStr(40,25, timeDateFrames[screenStatusCfx.currentBlinkingTimeField].c_str());
@@ -601,7 +682,10 @@ void screenDisplay(void *parameters){
         screen.drawStr(20,50, timeDateFrames[3].c_str());
         screen.sendBuffer();
       }
-  
+
+      //Serial.printf("CurrentBlinkingField = %d , currentliningSatate num = %d \n", screenStatusCfx.currentBlinkingTimeField, currentBlinkingState);
+
+    
     }else if(screenStatusCfx.screenCurrentIndex == 1){
       xQueueReceive(screenDHTQueue_handle, &TempRHvaluesBuffer, pdMS_TO_TICKS(10));
       screen.clearBuffer();
@@ -669,6 +753,7 @@ void screenDisplay(void *parameters){
 
 }
 
+
 void setup(){
   Serial.begin(115200);
 
@@ -706,7 +791,7 @@ void setup(){
   mpu.initialize();
   
   if (!mpu.testConnection()) {
-    Serial.println("MPU-6050 connection failed!");
+    Serial.println("❌ MPU-6050 connection failed!");
     screen.clearBuffer();
     screen.drawStr(5, 20, "MPU-6050 Error!");
     screen.setFont(u8g2_font_5x7_tr);
@@ -812,6 +897,16 @@ void setup(){
     1
   );
 
+  /*xTaskCreatePinnedToCore(
+    testInterrupt,
+    "INTERRUPT TESTING TASK",
+    1024,
+    NULL,
+    1,
+    NULL,
+    1
+  );*/
+  
 }
 
 void loop(){
