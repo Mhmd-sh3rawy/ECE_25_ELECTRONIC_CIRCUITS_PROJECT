@@ -145,6 +145,7 @@ All tasks are managed by the FreeRTOS kernel and pinned to a single ESP32 core f
 <p align="center">
   <img src="./assets/screenshot.png" alt="Centered Screenshot">
 </p>
+
 ---
 
 ## Inter-Task Communication
