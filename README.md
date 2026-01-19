@@ -71,8 +71,8 @@ All tasks are managed by the FreeRTOS kernel and pinned to a single ESP32 core f
                  │   FreeRTOS Kernel    │
                  └───────────┬──────────┘
                              │
-        ┌────────────────────┼────────────────────┐
-        │                    │                    │
+        ┌────────────────────┼─────────────────────┐
+        │                    │                     │
 ┌───────▼───────┐   ┌────────▼────────┐   ┌────────▼────────┐
 │   ISRs        │   │  Sensor Tasks   │   │  Network Tasks  │
 │ (GPIO Buttons)│   │                 │   │                 │
@@ -141,6 +141,10 @@ All tasks are managed by the FreeRTOS kernel and pinned to a single ESP32 core f
 | 26   | Decrement Button |
 | 32   | Edit Enable Button |
 | 33   | Pulse Sensor (ADC) |
+
+<p align="center">
+  <img src="./assets/screenshot.png" alt="Centered Screenshot">
+</p>
 
 ---
 
